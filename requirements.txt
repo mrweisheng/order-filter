@@ -1,5 +1,5 @@
 # 基础依赖包
-pandas==2.1.4
+pandas==2.0.3
 openpyxl==3.1.2
 Flask==3.0.0
 mysql-connector-python==8.2.0
@@ -7,5 +7,5 @@ Werkzeug==3.0.1
 flask-cors==4.0.0
 
 # 可选依赖（建议安装）
-numpy==1.26.3  # pandas的依赖包
+numpy==1.24.3  # pandas的依赖包
 python-dateutil==2.8.2  # 日期处理 
