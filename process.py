@@ -138,6 +138,7 @@ def save_to_database(df):
             confirm_time = VALUES(confirm_time),
             merchant_payment = VALUES(merchant_payment),
             updated_at = CURRENT_TIMESTAMP
+            -- 不更新customer_id和writer_id字段，保留原值
         """
         
         success_count = 0
