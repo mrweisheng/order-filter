@@ -10,7 +10,7 @@ Content-Type: multipart/form-data
 接口详情
 -------
 
-API: /process_order
+API: http://118.31.76.202:5000/process_order
 方法: POST
 描述: 处理不同渠道的订单数据，包括支付宝、企业微信、天猫和淘宝渠道
 
