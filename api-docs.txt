@@ -12,16 +12,16 @@ Content-Type: multipart/form-data
 
 API: /process_order
 方法: POST
-描述: 处理不同渠道的订单数据，包括支付宝、企业微信、慧辞和匠易艺渠道
+描述: 处理不同渠道的订单数据，包括支付宝、企业微信、天猫和淘宝渠道
 
 请求参数:
   - channel: 字符串，必填
-    * 可选值：支付宝、企业微信、慧辞、匠易艺
+    * 可选值：支付宝、企业微信、天猫、淘宝
   - order_file: 文件，必填
     * 格式：Excel文件(.xlsx)
   - refund_order_file: 文件，条件必填
     * 格式：Excel文件(.xlsx)
-    * 说明：慧辞和匠易艺渠道必填
+    * 说明：天猫和淘宝渠道必填
 
 文件命名规则:
 1. 支付宝渠道：
@@ -31,13 +31,15 @@ API: /process_order
    - order_file: 无特殊要求
    - 注意：Excel文件中sheet名必须为"result"
 
-3. 慧辞渠道：
-   - order_file: 文件名必须包含"慧辞"，不能包含"退款"
-   - refund_order_file: 文件名必须包含"慧辞"和"退款"
+3. 天猫渠道：
+   - order_file: 不能包含"退款"
+   - refund_order_file: 必须包含"退款"
+   - 说明：两个文件中必须有且仅有一个包含"退款"字样
 
-4. 匠易艺渠道：
-   - order_file: 文件名必须包含"匠易艺"，不能包含"退款"
-   - refund_order_file: 文件名必须包含"匠易艺"和"退款"
+4. 淘宝渠道：
+   - order_file: 不能包含"退款"
+   - refund_order_file: 必须包含"退款"
+   - 说明：两个文件中必须有且仅有一个包含"退款"字样
 
 响应格式:
 1. 成功响应: (HTTP Status: 200)
@@ -82,26 +84,26 @@ Content-Type: multipart/form-data
 channel: 企业微信
 order_file: [企业微信订单文件.xlsx]  // sheet名必须为"result"
 
-3. 慧辞渠道
+3. 天猫渠道
 请求:
 POST /process_order
 Content-Type: multipart/form-data
-channel: 慧辞
+channel: 天猫
 order_file: 慧辞12月订单.xlsx
 refund_order_file: 慧辞12月退款.xlsx
 
-4. 匠易艺渠道
+4. 淘宝渠道
 请求:
 POST /process_order
 Content-Type: multipart/form-data
-channel: 匠易艺
+channel: 淘宝
 order_file: 匠易艺12月订单.xlsx
 refund_order_file: 匠易艺12月退款.xlsx
 
 注意事项:
 1. 所有上传的文件必须是Excel格式（.xlsx）
 2. 企业微信渠道的Excel文件必须包含名为"result"的sheet
-3. 慧辞和匠易艺渠道必须同时上传订单文件和退款文件
+3. 天猫和淘宝渠道必须同时上传订单文件和退款文件
 4. 处理后的数据会保存到数据库，并生成新的Excel文件
 5. 数据库使用订单编号（order_id）作为主键，重复数据会更新而不是插入
 6. 所有响应都包含 code、message 和 data 三个字段

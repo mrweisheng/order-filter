@@ -202,10 +202,10 @@ def process_order():
         channel = request.form.get('channel')
         if not channel:
             return jsonify({
-                'code': 1,  # 改为1表示失败
+                'code': 1,
                 'message': '未指定渠道',
                 'data': None
-            }), 200  # HTTP状态码统一为200
+            }), 200
 
         # 检查订单文件
         if 'order_file' not in request.files:
@@ -217,7 +217,11 @@ def process_order():
             
         order_file = request.files['order_file']
         if order_file.filename == '':
-            return jsonify({'error': '没有选择订单文件'}), 400
+            return jsonify({
+                'code': 1,
+                'message': '没有选择订单文件',
+                'data': None
+            }), 200
 
         # 生成唯一的订单文件名
         order_filename = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{werkzeug.utils.secure_filename(order_file.filename)}"
@@ -228,187 +232,31 @@ def process_order():
             try:
                 os.makedirs(UPLOAD_FOLDER, mode=0o777)
             except Exception as e:
-                return jsonify({'error': f'无法创建上传目录: {str(e)}'}), 500
+                return jsonify({
+                    'code': 1,
+                    'message': f'无法创建上传目录: {str(e)}',
+                    'data': None
+                }), 200
 
         # 保存订单文件
         order_file.save(order_path)
 
         try:
+            # 根据渠道类型处理数据
             if channel == '支付宝':
                 df = process_alipay(order_path)
             elif channel == '企业微信':
                 raw_df = pd.read_excel(order_path, sheet_name="result")
                 df = process_wechat(raw_df)
-            elif channel == '慧辞':
-                try:
-                    # 打印订单文件名
-                    print(f"订单文件名: {order_file.filename}")
-                    
-                    # 验证订单文件名是否包含"慧辞"
-                    if '慧辞' not in order_file.filename:
-                        return jsonify({
-                            'code': 1,
-                            'message': f'订单文件名必须包含"慧辞"，当前文件名: {order_file.filename}',
-                            'data': None
-                        }), 200  # 改为200
-                    
-                    # 验证退款文件
-                    if 'refund_order_file' not in request.files:
-                        return jsonify({
-                            'code': 1,
-                            'message': '慧辞渠道需要上传退款文件',
-                            'data': None
-                        }), 200
-                    
-                    refund_file = request.files['refund_order_file']
-                    if refund_file.filename == '':
-                        return jsonify({
-                            'code': 1,
-                            'message': '没有选择退款文件',
-                            'data': None
-                        }), 200
-                    
-                    # 验证退款文件名是否包含"慧辞"
-                    if '慧辞' not in refund_file.filename:
-                        return jsonify({
-                            'code': 1,
-                            'message': '退款文件名必须包含"慧辞"',
-                            'data': None
-                        }), 200
-                    
-                    # 验证是否有且仅有一个文件包含"退款"
-                    order_is_refund = '退款' in order_file.filename
-                    refund_is_refund = '退款' in refund_file.filename
-                    
-                    if order_is_refund and refund_is_refund:
-                        return jsonify({
-                            'code': 1,
-                            'message': '只能有一个退款文件',
-                            'data': None
-                        }), 200
-                    elif not order_is_refund and not refund_is_refund:
-                        return jsonify({
-                            'code': 1,
-                            'message': '必须上传一个退款文件',
-                            'data': None
-                        }), 200
-                    
-                    # 如果订单文件是退款文件，则交换两个文件
-                    if order_is_refund:
-                        order_file, refund_file = refund_file, order_file
-
-                    try:
-                        # 直接从内存中读取文件内容
-                        order_df = pd.read_excel(order_file, dtype={'订单编号': str}, engine='openpyxl')
-                        refund_df = pd.read_excel(refund_file, dtype={'订单编号': str}, engine='openpyxl')
-                        
-                        # 调用处理函数
-                        from huici_process import process_orders, update_with_refunds
-                        print("开始处理慧辞数据...")
-                        
-                        # 处理订单数据
-                        intermediate_df = process_orders(order_df)
-                        
-                        # 处理退款数据
-                        df = update_with_refunds(intermediate_df, refund_df)
-                        df['渠道'] = '慧辞'
-                        
-                        print("慧辞数据处理完成")
-                        
-                    except Exception as e:
-                        print(f"处理慧辞数据时出错: {str(e)}")
-                        print(f"错误类型: {type(e)}")
-                        import traceback
-                        print(f"错误堆栈: {traceback.format_exc()}")
-                        raise
-                    
-                except Exception as e:
-                    print(f"慧辞渠道处理错误: {str(e)}")
-                    return jsonify({'error': str(e)}), 500
-            elif channel == '匠易艺':
-                try:
-                    # 验证订单文件名是否包含"匠易艺"
-                    if '匠易艺' not in order_file.filename:
-                        return jsonify({'error': '订单文件名必须包含"匠易艺"'}), 400
-                    
-                    # 验证退款文件
-                    if 'refund_order_file' not in request.files:
-                        return jsonify({'error': '匠易艺渠道需要上传退款文件'}), 400
-                    
-                    refund_file = request.files['refund_order_file']
-                    if refund_file.filename == '':
-                        return jsonify({'error': '没有选择退款文件'}), 400
-                    
-                    # 验证退款文件名是否包含"匠易艺"
-                    if '匠易艺' not in refund_file.filename:
-                        return jsonify({'error': '退款文件名必须包含"匠易艺"'}), 400
-                    
-                    # 验证是否有且仅有一个文件包含"退款"
-                    order_is_refund = '退款' in order_file.filename
-                    refund_is_refund = '退款' in refund_file.filename
-                    
-                    if order_is_refund and refund_is_refund:
-                        return jsonify({'error': '只能有一个退款文件'}), 400
-                    elif not order_is_refund and not refund_is_refund:
-                        return jsonify({'error': '必须上传一个退款文件'}), 400
-                    
-                    # 如果订单文件是退款文件，则交换两个文件
-                    if order_is_refund:
-                        order_file, refund_file = refund_file, order_file
-
-                    try:
-                        # 直接从内存中读取文件内容
-                        order_df = pd.read_excel(order_file, dtype={'订单编号': str}, engine='openpyxl')
-                        refund_df = pd.read_excel(refund_file, dtype={'订单编号': str}, engine='openpyxl')
-                        
-                        # 调用处理函数
-                        from yi_process import process_orders, update_with_refunds
-                        print("开始处理匠易艺数据...")
-                        
-                        # 处理订单数据
-                        intermediate_df = process_orders(order_df)
-                        
-                        # 处理退款数据
-                        df = update_with_refunds(intermediate_df, refund_df)
-                        
-                        print("匠易艺数据处理完成")
-                        
-                    except Exception as e:
-                        print(f"处理匠易艺数据时出错: {str(e)}")
-                        print(f"错误类型: {type(e)}")
-                        import traceback
-                        print(f"错误堆栈: {traceback.format_exc()}")
-                        raise
-                    
-                except Exception as e:
-                    print(f"匠易艺渠道处理错误: {str(e)}")
-                    return jsonify({'error': str(e)}), 500
+            elif channel in ['天猫', '淘宝']:
+                # 处理天猫和淘宝渠道的订单数据
+                df = process_tmall_taobao(channel, order_file)
             else:
-                # 其他渠道（匠易艺）需要退款文件
-                if 'refund_order_file' not in request.files:
-                    return jsonify({'error': f'{channel}渠道需要上传退款文件'}), 400
-                
-                refund_file = request.files['refund_order_file']
-                if refund_file.filename == '':
-                    return jsonify({'error': '没有选择退款文件'}), 400
-
-                # 生成唯一的退款文件名
-                refund_filename = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{werkzeug.utils.secure_filename(refund_file.filename)}"
-                refund_path = os.path.join(UPLOAD_FOLDER, refund_filename)
-                
-                # 保存退款文件
-                refund_file.save(refund_path)
-
-                try:
-                    if channel == '匠易艺':
-                        from yi import main as process_yi
-                        df = process_yi(order_path, refund_path)
-                    else:
-                        return jsonify({'error': f'不支持的渠道类型: {channel}'}), 400
-                finally:
-                    # 清理退款文件
-                    if os.path.exists(refund_path):
-                        os.remove(refund_path)
+                return jsonify({
+                    'code': 1,
+                    'message': f'不支持的渠道类型: {channel}',
+                    'data': None
+                }), 200
 
             # 保存到数据库
             if save_to_database(df):
@@ -420,19 +268,24 @@ def process_order():
                     df.to_excel(output_path, index=False)
                 except Exception as e:
                     return jsonify({
-                        'message': '数据已保存到数据库，但Excel文件生成失败',
-                        'error_detail': str(e)
+                        'code': 1,
+                        'message': f'数据已保存到数据库，但Excel文件生成失败: {str(e)}',
+                        'data': None
                     }), 200
 
                 return jsonify({
-                    'code': 0,  # 改为0表示成功
+                    'code': 0,
                     'message': '处理成功，数据已保存到数据库',
                     'data': {
                         'processed_file': output_filename
                     }
                 }), 200
             else:
-                return jsonify({'error': '数据库保存失败'}), 500
+                return jsonify({
+                    'code': 1,
+                    'message': '数据库保存失败',
+                    'data': None
+                }), 200
 
         finally:
             # 清理订单文件
@@ -440,11 +293,68 @@ def process_order():
                 os.remove(order_path)
 
     except Exception as e:
+        print(f"处理订单时发生异常: {str(e)}")
+        import traceback
+        print(f"错误堆栈: {traceback.format_exc()}")
         return jsonify({
             'code': 1,
             'message': str(e),
             'data': None
-        }), 200  # 错误时也返回200
+        }), 200
+
+def process_tmall_taobao(channel, order_file):
+    """处理天猫和淘宝渠道的订单数据
+    
+    支持天猫和淘宝多个店铺的数据处理，通过入参方式指定渠道
+    """
+    # 验证退款文件
+    if 'refund_order_file' not in request.files:
+        raise ValueError(f'{channel}渠道需要上传退款文件')
+    
+    refund_file = request.files['refund_order_file']
+    if refund_file.filename == '':
+        raise ValueError('没有选择退款文件')
+    
+    # 验证是否有且仅有一个文件包含"退款"
+    order_is_refund = '退款' in order_file.filename
+    refund_is_refund = '退款' in refund_file.filename
+    
+    if order_is_refund and refund_is_refund:
+        raise ValueError('只能有一个退款文件')
+    elif not order_is_refund and not refund_is_refund:
+        raise ValueError('必须上传一个退款文件')
+    
+    # 如果订单文件是退款文件，则交换两个文件
+    if order_is_refund:
+        order_file, refund_file = refund_file, order_file
+
+    try:
+        # 直接从内存中读取文件内容
+        order_df = pd.read_excel(order_file, dtype={'订单编号': str}, engine='openpyxl')
+        refund_df = pd.read_excel(refund_file, dtype={'订单编号': str}, engine='openpyxl')
+        
+        # 使用统一的处理模块
+        from yi_process import process_orders, update_with_refunds
+        print(f"开始处理{channel}数据...")
+        
+        # 处理订单数据
+        intermediate_df = process_orders(order_df)
+        
+        # 处理退款数据
+        result_df = update_with_refunds(intermediate_df, refund_df)
+        
+        # 设置渠道为天猫或淘宝
+        result_df['渠道'] = channel
+        
+        print(f"{channel}数据处理完成")
+        return result_df
+        
+    except Exception as e:
+        print(f"处理{channel}数据时出错: {str(e)}")
+        print(f"错误类型: {type(e)}")
+        import traceback
+        print(f"错误堆栈: {traceback.format_exc()}")
+        raise ValueError(f"{channel}数据处理失败: {str(e)}")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000) 
