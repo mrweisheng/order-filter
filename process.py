@@ -503,10 +503,54 @@ def process_tmall_taobao(channel, order_file):
     if order_is_refund:
         order_file, refund_file = refund_file, order_file
 
+    # 保存退款文件到磁盘
+    refund_filename = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_refund_{werkzeug.utils.secure_filename(refund_file.filename)}"
+    refund_path = os.path.join(UPLOAD_FOLDER, refund_filename)
+    print(f"保存退款文件到: {refund_path}")
+    refund_file.save(refund_path)
+    
+    print(f"检查退款文件是否存在: {os.path.exists(refund_path)}")
+    print(f"退款文件大小: {os.path.getsize(refund_path) if os.path.exists(refund_path) else '不存在'}")
+
     try:
-        # 直接从内存中读取文件内容
+        print("开始读取订单数据...")
+        # 读取订单文件 - 使用传入的order_file而不是order_path
         order_df = pd.read_excel(order_file, dtype={'订单编号': str}, engine='openpyxl')
-        refund_df = pd.read_excel(refund_file, dtype={'订单编号': str}, engine='openpyxl')
+        print(f"订单数据读取成功，行数: {len(order_df)}")
+        
+        print("开始读取退款数据...")
+        # 尝试使用不同的引擎读取退款文件
+        try:
+            print("尝试使用xlrd引擎读取退款文件...")
+            refund_df = pd.read_excel(refund_path, dtype={'订单编号': str}, engine='xlrd')
+        except Exception as e:
+            print(f"使用xlrd引擎读取失败: {str(e)}")
+            print("尝试将文件转换为CSV然后读取...")
+            # 尝试使用shell命令将Excel转换为CSV
+            import subprocess
+            try:
+                # 创建一个临时CSV文件
+                csv_path = refund_path.replace('.xlsx', '.csv')
+                # 使用python直接打开Excel并另存为CSV
+                import win32com.client
+                excel = win32com.client.Dispatch("Excel.Application")
+                excel.Visible = False
+                workbook = excel.Workbooks.Open(os.path.abspath(refund_path))
+                workbook.SaveAs(os.path.abspath(csv_path), FileFormat=6)  # 6 为CSV格式
+                workbook.Close()
+                excel.Quit()
+                
+                # 读取转换后的CSV
+                print(f"尝试读取转换后的CSV文件: {csv_path}")
+                refund_df = pd.read_csv(csv_path, dtype={'订单编号': str})
+                
+                # 删除临时CSV文件
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+                    print(f"临时CSV文件已删除: {csv_path}")
+            except Exception as e2:
+                print(f"转换为CSV失败: {str(e2)}")
+                raise ValueError(f"无法读取退款文件，请检查文件格式: {str(e)} | {str(e2)}")
         
         # 使用统一的处理模块
         from yi_process import process_orders, update_with_refunds
@@ -530,6 +574,11 @@ def process_tmall_taobao(channel, order_file):
         import traceback
         print(f"错误堆栈: {traceback.format_exc()}")
         raise ValueError(f"{channel}数据处理失败: {str(e)}")
+    finally:
+        # 清理退款文件
+        if os.path.exists(refund_path):
+            os.remove(refund_path)
+            print(f"临时退款文件已删除: {refund_path}")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000) 
