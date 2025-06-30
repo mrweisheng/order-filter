@@ -31,41 +31,82 @@ DB_CONFIG = {
 def process_alipay(file_path):
     """处理支付宝订单数据"""
     try:
-        print(f"开始读取支付宝Excel文件: {file_path}")
+        print(f"开始读取支付宝文件: {file_path}")
         
-        # 尝试使用xlrd引擎读取（支持.xls和.xlsx格式，兼容性最好）
-        try:
-            print("尝试使用xlrd引擎读取...")
-            df = pd.read_excel(file_path, skiprows=2, engine='xlrd')
-            print(f"使用xlrd引擎读取成功，原始行数: {len(df)}")
-        except Exception as e1:
-            print(f"xlrd引擎读取失败: {str(e1)}")
+        # 检查文件扩展名，如果是CSV文件直接使用CSV读取
+        if file_path.lower().endswith('.csv'):
+            print("检测到CSV文件，使用CSV读取引擎...")
             
-            # 尝试使用openpyxl引擎读取（只支持.xlsx格式）
-            try:
-                print("尝试使用openpyxl引擎读取...")
-                df = pd.read_excel(file_path, skiprows=2, engine='openpyxl')
-                print(f"使用openpyxl引擎读取成功，原始行数: {len(df)}")
-            except Exception as e2:
-                print(f"openpyxl引擎读取失败: {str(e2)}")
-                
-                # 尝试不指定引擎（pandas自动选择）
+            # 尝试多种编码读取CSV文件
+            encodings = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'latin1']
+            df = None
+            
+            for encoding in encodings:
                 try:
-                    print("尝试使用pandas默认引擎读取...")
-                    df = pd.read_excel(file_path, skiprows=2)
-                    print(f"使用pandas默认引擎读取成功，原始行数: {len(df)}")
-                except Exception as e3:
-                    print(f"所有引擎都读取失败:")
-                    print(f"  xlrd错误: {str(e1)}")
-                    print(f"  openpyxl错误: {str(e2)}")
-                    print(f"  pandas默认引擎错误: {str(e3)}")
-                    raise ValueError(f"无法读取Excel文件，请检查文件格式是否正确。支持格式：.xlsx, .xls。错误信息: {str(e1)}")
+                    print(f"尝试使用 {encoding} 编码读取...")
+                    df = pd.read_csv(file_path, skiprows=2, encoding=encoding)
+                    print(f"使用 {encoding} 编码读取成功，原始行数: {len(df)}")
+                    break
+                except UnicodeDecodeError as e:
+                    print(f"{encoding} 编码读取失败: {str(e)}")
+                    continue
+                except Exception as e:
+                    print(f"{encoding} 编码读取失败: {str(e)}")
+                    continue
+            
+            if df is None:
+                raise ValueError("无法读取CSV文件，尝试了多种编码都失败")
+        else:
+            # Excel文件的多引擎尝试
+            # 尝试使用xlrd引擎读取（支持.xls和.xlsx格式，兼容性最好）
+            try:
+                print("尝试使用xlrd引擎读取...")
+                df = pd.read_excel(file_path, skiprows=2, engine='xlrd')
+                print(f"使用xlrd引擎读取成功，原始行数: {len(df)}")
+            except Exception as e1:
+                print(f"xlrd引擎读取失败: {str(e1)}")
+                
+                # 尝试使用openpyxl引擎读取（只支持.xlsx格式）
+                try:
+                    print("尝试使用openpyxl引擎读取...")
+                    df = pd.read_excel(file_path, skiprows=2, engine='openpyxl')
+                    print(f"使用openpyxl引擎读取成功，原始行数: {len(df)}")
+                except Exception as e2:
+                    print(f"openpyxl引擎读取失败: {str(e2)}")
+                    
+                    # 尝试不指定引擎（pandas自动选择）
+                    try:
+                        print("尝试使用pandas默认引擎读取...")
+                        df = pd.read_excel(file_path, skiprows=2)
+                        print(f"使用pandas默认引擎读取成功，原始行数: {len(df)}")
+                    except Exception as e3:
+                        print(f"pandas默认引擎读取失败: {str(e3)}")
+                        
+                        # 尝试读取HTML表格（可能是网页导出的数据）
+                        try:
+                            print("尝试读取HTML表格...")
+                            # 读取所有HTML表格
+                            html_tables = pd.read_html(file_path)
+                            if html_tables:
+                                df = html_tables[0]  # 使用第一个表格
+                                print(f"使用HTML表格读取成功，原始行数: {len(df)}")
+                            else:
+                                raise ValueError("HTML文件中没有找到表格")
+                        except Exception as e4:
+                            print(f"HTML表格读取失败: {str(e4)}")
+                            
+                            print(f"所有格式都读取失败:")
+                            print(f"  xlrd错误: {str(e1)}")
+                            print(f"  openpyxl错误: {str(e2)}")
+                            print(f"  pandas默认引擎错误: {str(e3)}")
+                            print(f"  HTML表格错误: {str(e4)}")
+                            raise ValueError(f"无法读取文件，请检查文件格式是否正确。支持格式：.xlsx, .xls, .csv, HTML表格。错误信息: {str(e1)}")
         
         # 验证数据是否为空
         if df.empty:
-            raise ValueError("Excel文件中没有数据")
+            raise ValueError("文件中没有数据")
         
-        print(f"Excel文件列名: {df.columns.tolist()}")
+        print(f"文件列名: {df.columns.tolist()}")
         
         # 验证必要字段是否存在
         required_fields = ['商户订单号', '支付宝交易号', '商家实收(元)', '交易状态', '创建时间']
@@ -75,7 +116,7 @@ def process_alipay(file_path):
                 missing_fields.append(field)
         
         if missing_fields:
-            raise ValueError(f"Excel文件缺少必要字段: {missing_fields}")
+            raise ValueError(f"文件缺少必要字段: {missing_fields}")
         
         # 移除最后一行（通常是汇总行）
         if len(df) > 0:
@@ -519,21 +560,39 @@ def process_order():
             print(f"数据处理完成，准备保存到数据库，数据行数: {len(df)}")
             # 保存到数据库
             if save_to_database(df):
-                # 生成处理后的文件名
-                output_filename = f'processed_{order_filename}'
-                output_path = os.path.join(UPLOAD_FOLDER, output_filename)
-                print(f"准备生成处理后的Excel文件: {output_path}")
-                
-                try:
-                    df.to_excel(output_path, index=False)
-                    print(f"处理后的Excel文件已生成: {output_path}")
-                except Exception as e:
-                    print(f"生成Excel文件失败: {str(e)}")
-                    return jsonify({
-                        'code': 1,
-                        'message': f'数据已保存到数据库，但Excel文件生成失败: {str(e)}',
-                        'data': None
-                    }), 200
+                # 根据原始文件格式决定输出文件名和格式
+                if order_file.filename.lower().endswith('.csv'):
+                    # 如果是CSV文件，生成CSV格式的处理后文件
+                    output_filename = f'processed_{order_filename.replace(".csv", "")}.csv'
+                    output_path = os.path.join(UPLOAD_FOLDER, output_filename)
+                    print(f"准备生成处理后的CSV文件: {output_path}")
+                    
+                    try:
+                        df.to_csv(output_path, index=False, encoding='utf-8-sig')  # 使用UTF-8-BOM编码确保中文正确显示
+                        print(f"处理后的CSV文件已生成: {output_path}")
+                    except Exception as e:
+                        print(f"生成CSV文件失败: {str(e)}")
+                        return jsonify({
+                            'code': 1,
+                            'message': f'数据已保存到数据库，但CSV文件生成失败: {str(e)}',
+                            'data': None
+                        }), 200
+                else:
+                    # 如果是Excel文件，生成Excel格式的处理后文件
+                    output_filename = f'processed_{order_filename.replace(".xlsx", "").replace(".xls", "")}.xlsx'
+                    output_path = os.path.join(UPLOAD_FOLDER, output_filename)
+                    print(f"准备生成处理后的Excel文件: {output_path}")
+                    
+                    try:
+                        df.to_excel(output_path, index=False)
+                        print(f"处理后的Excel文件已生成: {output_path}")
+                    except Exception as e:
+                        print(f"生成Excel文件失败: {str(e)}")
+                        return jsonify({
+                            'code': 1,
+                            'message': f'数据已保存到数据库，但Excel文件生成失败: {str(e)}',
+                            'data': None
+                        }), 200
 
                 print("处理成功，返回成功响应")
                 return jsonify({
