@@ -70,13 +70,17 @@ def process_wechat(df):
     for order_id, group in grouped:
         print(f"处理关联单号: {order_id}, 该组数据行数: {len(group)}")
         
+        # 安全的字段访问 - 添加字段存在性检查
+        payment_id = group["商户单号"].iloc[0] if "商户单号" in group.columns else ""
+        remark = group["备注"].iloc[0] if "备注" in group.columns and len(group) > 0 else ""
+        
         order_data = {
             "订单编号": order_id,
-            "支付单号": group["商户单号"].iloc[0],
+            "支付单号": payment_id,
             "买家实付": 0,
             "订单状态": "",
             "订单创建时间": group["动账时间"].min(),
-            "商家备注": group["备注"].iloc[0] if "备注" in group.columns else "",
+            "商家备注": remark,
             "卖家实退": 0,
             "手续费": 0,
             "渠道": "企业微信",
@@ -92,12 +96,30 @@ def process_wechat(df):
 
         for _, row in group.iterrows():
             try:
+                # 安全的数值转换 - 添加数据类型检查
+                def safe_amount(value):
+                    """安全转换动账金额为数值"""
+                    try:
+                        if pd.isna(value) or value == '':
+                            return 0.0
+                        return float(value)
+                    except (ValueError, TypeError):
+                        print(f"警告: 动账金额格式错误: {value}, 类型: {type(value)}")
+                        return 0.0
+                
+                # 保持原有逻辑，但添加安全的数值转换
                 if row["动账类型"] == "收款":
-                    order_data["买家实付"] += row["动账金额"]
+                    amount = safe_amount(row["动账金额"])
+                    order_data["买家实付"] += amount
                 elif row["动账类型"] == "退款":
-                    order_data["卖家实退"] += abs(row["动账金额"])
+                    amount = safe_amount(row["动账金额"])
+                    # 企业微信退款需要处理手续费：实际退款金额 = 显示退款金额 ÷ 0.994
+                    actual_refund = abs(amount) / 0.994
+                    order_data["卖家实退"] += actual_refund
+                    print(f"    退款调整: 显示金额={abs(amount)}, 实际金额={actual_refund:.2f}")
                 elif row["动账类型"] == "交易手续费":
-                    order_data["手续费"] += abs(row["动账金额"])
+                    amount = safe_amount(row["动账金额"])
+                    order_data["手续费"] += abs(amount)
                 print(f"  动账类型: {row['动账类型']}, 动账金额: {row['动账金额']}")
             except Exception as e:
                 print(f"处理行数据时出错: {str(e)}")
