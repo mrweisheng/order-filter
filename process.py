@@ -30,27 +30,85 @@ DB_CONFIG = {
 
 def process_alipay(file_path):
     """处理支付宝订单数据"""
-    # 读取Excel文件并跳过前两行和最后一行
-    df = pd.read_excel(file_path, skiprows=2, engine='openpyxl')
-    # 移除最后一行
-    df = df[:-1]
+    try:
+        print(f"开始读取支付宝Excel文件: {file_path}")
+        
+        # 尝试使用xlrd引擎读取（支持.xls和.xlsx格式，兼容性最好）
+        try:
+            print("尝试使用xlrd引擎读取...")
+            df = pd.read_excel(file_path, skiprows=2, engine='xlrd')
+            print(f"使用xlrd引擎读取成功，原始行数: {len(df)}")
+        except Exception as e1:
+            print(f"xlrd引擎读取失败: {str(e1)}")
+            
+            # 尝试使用openpyxl引擎读取（只支持.xlsx格式）
+            try:
+                print("尝试使用openpyxl引擎读取...")
+                df = pd.read_excel(file_path, skiprows=2, engine='openpyxl')
+                print(f"使用openpyxl引擎读取成功，原始行数: {len(df)}")
+            except Exception as e2:
+                print(f"openpyxl引擎读取失败: {str(e2)}")
+                
+                # 尝试不指定引擎（pandas自动选择）
+                try:
+                    print("尝试使用pandas默认引擎读取...")
+                    df = pd.read_excel(file_path, skiprows=2)
+                    print(f"使用pandas默认引擎读取成功，原始行数: {len(df)}")
+                except Exception as e3:
+                    print(f"所有引擎都读取失败:")
+                    print(f"  xlrd错误: {str(e1)}")
+                    print(f"  openpyxl错误: {str(e2)}")
+                    print(f"  pandas默认引擎错误: {str(e3)}")
+                    raise ValueError(f"无法读取Excel文件，请检查文件格式是否正确。支持格式：.xlsx, .xls。错误信息: {str(e1)}")
+        
+        # 验证数据是否为空
+        if df.empty:
+            raise ValueError("Excel文件中没有数据")
+        
+        print(f"Excel文件列名: {df.columns.tolist()}")
+        
+        # 验证必要字段是否存在
+        required_fields = ['商户订单号', '支付宝交易号', '商家实收(元)', '交易状态', '创建时间']
+        missing_fields = []
+        for field in required_fields:
+            if field not in df.columns:
+                missing_fields.append(field)
+        
+        if missing_fields:
+            raise ValueError(f"Excel文件缺少必要字段: {missing_fields}")
+        
+        # 移除最后一行（通常是汇总行）
+        if len(df) > 0:
+            df = df[:-1]
+            print(f"移除最后一行后，数据行数: {len(df)}")
+        
+        # 验证数据行数
+        if len(df) == 0:
+            raise ValueError("处理后没有有效数据行")
 
-    # 创建新的DataFrame，只包含需要的列，并按规则处理数据
-    new_df = pd.DataFrame({
-        '订单编号': df['商户订单号'],
-        '支付单号': df['支付宝交易号'],
-        '买家实付': df['商家实收(元)'],
-        '订单状态': df['交易状态'],
-        '订单创建时间': df['创建时间'],
-        '商家备注': df['付款备注'].fillna(''),
-        '卖家实退': df['商家实退(元)'].fillna(0),
-        '手续费': df.apply(lambda row: (row['服务费(元)'] - row['退服务费(元)']) if pd.notna(row['服务费(元)']) and pd.notna(row['退服务费(元)']) else row['服务费(元)'], axis=1),
-        '渠道': '支付宝',
-        '确认收货时间': df.get('确认收货时间', ''),
-        '打款商家金额': df.get('打款商家金额', '')
-    })
+        # 创建新的DataFrame，只包含需要的列，并按规则处理数据
+        new_df = pd.DataFrame({
+            '订单编号': df['商户订单号'],
+            '支付单号': df['支付宝交易号'],
+            '买家实付': df['商家实收(元)'],
+            '订单状态': df['交易状态'],
+            '订单创建时间': df['创建时间'],
+            '商家备注': df['付款备注'].fillna(''),
+            '卖家实退': df['商家实退(元)'].fillna(0),
+            '手续费': df.apply(lambda row: (row['服务费(元)'] - row['退服务费(元)']) if pd.notna(row['服务费(元)']) and pd.notna(row['退服务费(元)']) else row['服务费(元)'], axis=1),
+            '渠道': '支付宝',
+            '确认收货时间': df.get('确认收货时间', ''),
+            '打款商家金额': df.get('打款商家金额', '')
+        })
 
-    return new_df
+        print(f"支付宝数据处理完成，结果行数: {len(new_df)}")
+        return new_df
+        
+    except Exception as e:
+        print(f"处理支付宝数据时出错: {str(e)}")
+        import traceback
+        print(f"错误堆栈: {traceback.format_exc()}")
+        raise
 
 def process_wechat(df):
     """处理微信订单数据"""
