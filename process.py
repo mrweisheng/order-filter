@@ -406,8 +406,18 @@ def process_order():
             elif channel == '企业微信':
                 print("开始处理企业微信渠道数据...")
                 try:
-                    print(f"尝试读取Excel文件，sheet名: result")
-                    raw_df = pd.read_excel(order_path, sheet_name="result")
+                    # 自动检测Excel文件中的工作表名称
+                    xl_file = pd.ExcelFile(order_path)
+                    sheet_names = xl_file.sheet_names
+                    print(f"Excel文件中的工作表: {sheet_names}")
+                    
+                    if not sheet_names:
+                        raise ValueError("Excel文件中没有找到任何工作表")
+                    
+                    # 使用第一个工作表
+                    first_sheet = sheet_names[0]
+                    print(f"使用工作表: {first_sheet}")
+                    raw_df = pd.read_excel(order_path, sheet_name=first_sheet)
                     print(f"成功读取Excel文件，行数: {len(raw_df)}")
                     df = process_wechat(raw_df)
                 except Exception as e:
