@@ -268,18 +268,6 @@ def save_to_database(df):
         print("=== 数据库操作开始 ===")
         print(f"连接数据库: {DB_CONFIG['host']}, 数据库: {DB_CONFIG['database']}")
         
-        # 尝试获取已有的订单数量
-        try:
-            conn_test = mysql.connector.connect(**DB_CONFIG)
-            cursor_test = conn_test.cursor()
-            cursor_test.execute("SELECT COUNT(*) FROM orders")
-            count_before = cursor_test.fetchone()[0]
-            print(f"数据库操作前orders表中的记录数: {count_before}")
-            cursor_test.close()
-            conn_test.close()
-        except Exception as e:
-            print(f"获取现有订单数量时出错: {str(e)}")
-        
         # 连接数据库
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
@@ -297,14 +285,23 @@ def save_to_database(df):
         except Exception as e:
             print(f"验证表存在时出错: {str(e)}")
         
-        # 打印要保存的数据总数和部分样本
-        print(f"准备保存的数据总数: {len(df)}")
-        if not df.empty:
-            print(f"数据样本 (前3行):")
-            for i, row in df.head(3).iterrows():
-                print(f"  行 {i}: 订单编号={row['订单编号']}, 渠道={row['渠道']}, 金额={row['买家实付']}")
+        # 打印要保存的数据总数
+        total_count = len(df)
+        print(f"准备保存的数据总数: {total_count}")
         
-        # 修改插入语句，更新时自动更新updated_at
+        # 根据数据量决定分批大小
+        if total_count <= 100:
+            batch_size = total_count  # 小批量一次性处理
+        elif total_count <= 1000:
+            batch_size = 500  # 中等批量分2批
+        elif total_count <= 10000:
+            batch_size = 1000  # 大批量分10批
+        else:
+            batch_size = 2000  # 超大批量分更多批
+        
+        print(f"分批处理，每批大小: {batch_size}")
+        
+        # 批量插入语句
         insert_query = """
         INSERT INTO orders (
             order_id, payment_id, amount, status, create_time, 
@@ -324,31 +321,21 @@ def save_to_database(df):
             confirm_time = VALUES(confirm_time),
             merchant_payment = VALUES(merchant_payment),
             updated_at = CURRENT_TIMESTAMP
-            -- 不更新customer_id和writer_id字段，保留原值
         """
         
-        # 确认表结构
-        try:
-            cursor.execute("DESCRIBE orders")
-            columns = cursor.fetchall()
-            print("orders表结构:")
-            for col in columns:
-                print(f"  {col[0]}: {col[1]}")
-        except Exception as e:
-            print(f"获取表结构时出错: {str(e)}")
+        # 分批处理数据
+        total_success = 0
+        total_error = 0
         
-        success_count = 0
-        error_count = 0
-        
-        # 保存一份订单ID列表，用于后续验证
-        order_ids = df['订单编号'].tolist()
-        
-        # 准备数据并执行插入
-        for index, row in df.iterrows():
-            try:
-                # 打印每一行要插入的数据
-                print(f"处理第 {index+1}/{len(df)} 行数据，订单编号: {row['订单编号']}")
-                
+        for batch_start in range(0, total_count, batch_size):
+            batch_end = min(batch_start + batch_size, total_count)
+            batch_df = df.iloc[batch_start:batch_end]
+            
+            print(f"处理第 {batch_start//batch_size + 1} 批，数据范围: {batch_start+1}-{batch_end}")
+            
+            # 准备当前批次数据
+            batch_data = []
+            for index, row in batch_df.iterrows():
                 data = (
                     str(row['订单编号']),
                     str(row['支付单号']),
@@ -362,93 +349,46 @@ def save_to_database(df):
                     safe_datetime(row['确认收货时间']),
                     safe_float(row['打款商家金额'])
                 )
+                batch_data.append(data)
+            
+            try:
+                # 执行批量插入
+                cursor.executemany(insert_query, batch_data)
+                conn.commit()
                 
-                # 打印SQL和参数
-                # print(f"SQL: {insert_query}")
-                print(f"参数: {data}")
-                
-                cursor.execute(insert_query, data)
-                success_count += 1
-                
-                # 每10条数据提交一次
-                if success_count % 10 == 0:
-                    conn.commit()
-                    print(f"已成功处理 {success_count}/{len(df)} 条数据, 已提交")
-                    
-                    # 验证提交的数据是否存在
-                    if success_count == 10:  # 只在第一次提交后检查
-                        try:
-                            check_query = f"SELECT COUNT(*) FROM orders WHERE order_id = %s"
-                            cursor.execute(check_query, (str(row['订单编号']),))
-                            count = cursor.fetchone()[0]
-                            if count > 0:
-                                print(f"验证成功: 订单 {row['订单编号']} 已存在于数据库中")
-                            else:
-                                print(f"验证失败: 订单 {row['订单编号']} 不存在于数据库中!")
-                        except Exception as e:
-                            print(f"验证数据时出错: {str(e)}")
+                batch_success = len(batch_data)
+                total_success += batch_success
+                print(f"第 {batch_start//batch_size + 1} 批处理完成，成功: {batch_success} 条")
                 
             except Error as e:
-                error_count += 1
-                print(f"第 {index+1} 行数据插入失败: {str(e)}")
-                print(f"失败的数据: {data}")
-                import traceback
-                print(f"错误堆栈: {traceback.format_exc()}")
+                print(f"第 {batch_start//batch_size + 1} 批处理失败: {str(e)}")
+                total_error += len(batch_data)
+                # 继续处理下一批，不中断整个流程
         
-        # 最后提交剩余的数据
-        try:
-            conn.commit()
-            print("最终提交完成")
+        # 最终验证：只验证几条数据
+        if total_success > 0:
+            sample_size = min(3, total_success)
+            sample_ids = [df.iloc[i]['订单编号'] for i in range(sample_size)]
+            print(f"验证 {sample_size} 个订单ID:")
             
-            # 最终验证：随机选择几个订单ID进行检查
-            import random
-            if order_ids:
-                sample_size = min(5, len(order_ids))
-                sample_ids = random.sample(order_ids, sample_size)
-                print(f"随机抽查 {sample_size} 个订单ID:")
-                
-                for order_id in sample_ids:
-                    try:
-                        check_query = "SELECT COUNT(*) FROM orders WHERE order_id = %s"
-                        cursor.execute(check_query, (str(order_id),))
-                        count = cursor.fetchone()[0]
-                        print(f"  订单ID {order_id}: {'存在' if count > 0 else '不存在!'}")
-                    except Exception as e:
-                        print(f"  验证订单ID {order_id} 时出错: {str(e)}")
-                
-                # 检查渠道数据
-                channel_value = df['渠道'].iloc[0] if not df.empty else '未知'
+            for order_id in sample_ids:
                 try:
-                    check_query = "SELECT COUNT(*) FROM orders WHERE channel = %s"
-                    cursor.execute(check_query, (channel_value,))
+                    check_query = "SELECT COUNT(*) FROM orders WHERE order_id = %s"
+                    cursor.execute(check_query, (str(order_id),))
                     count = cursor.fetchone()[0]
-                    print(f"渠道 '{channel_value}' 的记录总数: {count}")
+                    print(f"  订单ID {order_id}: {'存在' if count > 0 else '不存在!'}")
                 except Exception as e:
-                    print(f"验证渠道数据时出错: {str(e)}")
-                
-            # 查询数据库总记录数
-            try:
-                cursor.execute("SELECT COUNT(*) FROM orders")
-                count_after = cursor.fetchone()[0]
-                print(f"数据库操作后orders表中的记录数: {count_after}")
-                if 'count_before' in locals():
-                    print(f"新增记录数: {count_after - count_before}")
-            except Exception as e:
-                print(f"获取最终记录数时出错: {str(e)}")
-            
-        except Error as e:
-            print(f"最终提交时出错: {str(e)}")
-            import traceback
-            print(f"错误堆栈: {traceback.format_exc()}")
+                    print(f"  验证订单ID {order_id} 时出错: {str(e)}")
         
         print(f"""
         数据处理完成:
-        - 总数据: {len(df)}
-        - 成功: {success_count}
-        - 失败: {error_count}
+        - 总数据: {total_count}
+        - 成功: {total_success}
+        - 失败: {total_error}
+        - 成功率: {total_success/total_count*100:.1f}%
         """)
         
-        return success_count > 0
+        return total_success > 0
         
     except Error as e:
         print(f"数据库连接或操作错误: {str(e)}")
@@ -801,7 +741,5 @@ if __name__ == '__main__':
     # 设置请求体大小限制
     app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
     
-    # 启动服务器时设置超时参数
-    app.run(host='0.0.0.0', port=5000, threaded=True, 
-            request_timeout=300,  # 5分钟请求超时
-            request_handler_timeout=300)  # 5分钟处理超时 
+    # 启动服务器
+    app.run(host='0.0.0.0', port=5000, threaded=True) 
