@@ -7,9 +7,15 @@ from mysql.connector import Error
 import uuid
 import time
 from flask_cors import CORS
+import threading
+import queue
 
 app = Flask(__name__)
 CORS(app)
+
+# 添加处理状态跟踪
+processing_tasks = {}
+task_queue = queue.Queue()
 
 # 设置上传文件的保存目录
 UPLOAD_FOLDER = 'uploads'
@@ -457,6 +463,23 @@ def save_to_database(df):
             print("数据库连接已关闭")
             print("=== 数据库操作结束 ===")
 
+@app.route('/process_status/<task_id>', methods=['GET'])
+def get_process_status(task_id):
+    """查询处理状态"""
+    if task_id in processing_tasks:
+        status = processing_tasks[task_id]
+        return jsonify({
+            'code': 0,
+            'message': '查询成功',
+            'data': status
+        }), 200
+    else:
+        return jsonify({
+            'code': 1,
+            'message': '任务不存在',
+            'data': None
+        }), 200
+
 @app.route('/process_order', methods=['POST'])
 def process_order():
     """处理订单数据的API端点"""
@@ -465,14 +488,25 @@ def process_order():
         print(f"请求表单数据: {request.form}")
         print(f"请求文件: {request.files}")
         
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+        processing_tasks[task_id] = {
+            'status': 'processing',
+            'progress': 0,
+            'message': '开始处理...',
+            'start_time': time.time()
+        }
+        
         # 检查渠道参数
         channel = request.form.get('channel')
         if not channel:
             print("错误: 未指定渠道")
+            processing_tasks[task_id]['status'] = 'error'
+            processing_tasks[task_id]['message'] = '未指定渠道'
             return jsonify({
                 'code': 1,
                 'message': '未指定渠道',
-                'data': None
+                'data': {'task_id': task_id}
             }), 200
 
         print(f"处理渠道: {channel}")
@@ -480,19 +514,23 @@ def process_order():
         # 检查订单文件
         if 'order_file' not in request.files:
             print("错误: 没有上传订单文件")
+            processing_tasks[task_id]['status'] = 'error'
+            processing_tasks[task_id]['message'] = '没有上传订单文件'
             return jsonify({
                 'code': 1,
                 'message': '没有上传订单文件',
-                'data': None
+                'data': {'task_id': task_id}
             }), 200
             
         order_file = request.files['order_file']
         if order_file.filename == '':
             print("错误: 没有选择订单文件")
+            processing_tasks[task_id]['status'] = 'error'
+            processing_tasks[task_id]['message'] = '没有选择订单文件'
             return jsonify({
                 'code': 1,
                 'message': '没有选择订单文件',
-                'data': None
+                'data': {'task_id': task_id}
             }), 200
 
         print(f"订单文件名: {order_file.filename}")
@@ -509,10 +547,12 @@ def process_order():
                 print(f"创建上传目录: {UPLOAD_FOLDER}")
             except Exception as e:
                 print(f"无法创建上传目录: {str(e)}")
+                processing_tasks[task_id]['status'] = 'error'
+                processing_tasks[task_id]['message'] = f'无法创建上传目录: {str(e)}'
                 return jsonify({
                     'code': 1,
                     'message': f'无法创建上传目录: {str(e)}',
-                    'data': None
+                    'data': {'task_id': task_id}
                 }), 200
 
         # 保存订单文件
@@ -527,34 +567,42 @@ def process_order():
             elif channel == '企业微信':
                 print("开始处理企业微信渠道数据...")
                 try:
-                    # 自动检测Excel文件中的工作表名称
-                    xl_file = pd.ExcelFile(order_path)
-                    sheet_names = xl_file.sheet_names
-                    print(f"Excel文件中的工作表: {sheet_names}")
-                    
-                    if not sheet_names:
-                        raise ValueError("Excel文件中没有找到任何工作表")
-                    
-                    # 使用第一个工作表
-                    first_sheet = sheet_names[0]
-                    print(f"使用工作表: {first_sheet}")
-                    raw_df = pd.read_excel(order_path, sheet_name=first_sheet)
-                    print(f"成功读取Excel文件，行数: {len(raw_df)}")
-                    df = process_wechat(raw_df)
+                    # 使用with语句确保文件句柄正确释放
+                    with pd.ExcelFile(order_path) as xl:
+                        sheet_names = xl.sheet_names
+                        print(f"Excel文件中的工作表: {sheet_names}")
+                        
+                        if not sheet_names:
+                            raise ValueError("Excel文件中没有找到任何工作表")
+                        
+                        # 使用第一个工作表
+                        first_sheet = sheet_names[0]
+                        print(f"使用工作表: {first_sheet}")
+                        raw_df = xl.parse(first_sheet)
+                        print(f"成功读取Excel文件，行数: {len(raw_df)}")
+                        df = process_wechat(raw_df)
                 except Exception as e:
                     print(f"读取或处理企业微信数据时出错: {str(e)}")
                     import traceback
                     print(f"错误堆栈: {traceback.format_exc()}")
-                    raise
+                    processing_tasks[task_id]['status'] = 'error'
+                    processing_tasks[task_id]['message'] = f'读取或处理企业微信数据时出错: {str(e)}'
+                    return jsonify({
+                        'code': 1,
+                        'message': f'读取或处理企业微信数据时出错: {str(e)}',
+                        'data': {'task_id': task_id}
+                    }), 200
             elif channel in ['天猫', '淘宝']:
                 print(f"开始处理{channel}渠道数据...")
                 df = process_tmall_taobao(channel, order_file)
             else:
                 print(f"不支持的渠道类型: {channel}")
+                processing_tasks[task_id]['status'] = 'error'
+                processing_tasks[task_id]['message'] = f'不支持的渠道类型: {channel}'
                 return jsonify({
                     'code': 1,
                     'message': f'不支持的渠道类型: {channel}',
-                    'data': None
+                    'data': {'task_id': task_id}
                 }), 200
 
             print(f"数据处理完成，准备保存到数据库，数据行数: {len(df)}")
@@ -572,10 +620,12 @@ def process_order():
                         print(f"处理后的CSV文件已生成: {output_path}")
                     except Exception as e:
                         print(f"生成CSV文件失败: {str(e)}")
+                        processing_tasks[task_id]['status'] = 'error'
+                        processing_tasks[task_id]['message'] = f'数据已保存到数据库，但CSV文件生成失败: {str(e)}'
                         return jsonify({
                             'code': 1,
                             'message': f'数据已保存到数据库，但CSV文件生成失败: {str(e)}',
-                            'data': None
+                            'data': {'task_id': task_id}
                         }), 200
                 else:
                     # 如果是Excel文件，生成Excel格式的处理后文件
@@ -588,42 +638,56 @@ def process_order():
                         print(f"处理后的Excel文件已生成: {output_path}")
                     except Exception as e:
                         print(f"生成Excel文件失败: {str(e)}")
+                        processing_tasks[task_id]['status'] = 'error'
+                        processing_tasks[task_id]['message'] = f'数据已保存到数据库，但Excel文件生成失败: {str(e)}'
                         return jsonify({
                             'code': 1,
                             'message': f'数据已保存到数据库，但Excel文件生成失败: {str(e)}',
-                            'data': None
+                            'data': {'task_id': task_id}
                         }), 200
 
-                print("处理成功，返回成功响应")
+                processing_tasks[task_id]['status'] = 'success'
+                processing_tasks[task_id]['message'] = '处理成功，数据已保存到数据库'
+                processing_tasks[task_id]['data'] = {'processed_file': output_filename}
                 return jsonify({
                     'code': 0,
                     'message': '处理成功，数据已保存到数据库',
-                    'data': {
-                        'processed_file': output_filename
-                    }
+                    'data': {'task_id': task_id}
                 }), 200
             else:
                 print("数据库保存失败")
+                processing_tasks[task_id]['status'] = 'error'
+                processing_tasks[task_id]['message'] = '数据库保存失败'
                 return jsonify({
                     'code': 1,
                     'message': '数据库保存失败',
-                    'data': None
+                    'data': {'task_id': task_id}
                 }), 200
 
         finally:
-            # 清理订单文件
+            # 清理订单文件 - 添加延迟和重试机制
             if os.path.exists(order_path):
-                os.remove(order_path)
-                print(f"临时订单文件已删除: {order_path}")
+                try:
+                    # 等待一小段时间确保文件句柄完全释放
+                    time.sleep(0.5)
+                    os.remove(order_path)
+                    print(f"临时订单文件已删除: {order_path}")
+                except PermissionError as e:
+                    print(f"文件删除失败，可能仍在被使用: {str(e)}")
+                    # 不抛出异常，让程序继续运行
+                except Exception as e:
+                    print(f"删除文件时出错: {str(e)}")
 
     except Exception as e:
         print(f"处理订单时发生异常: {str(e)}")
         import traceback
         print(f"错误堆栈: {traceback.format_exc()}")
+        processing_tasks[task_id]['status'] = 'error'
+        processing_tasks[task_id]['message'] = str(e)
         return jsonify({
             'code': 1,
             'message': str(e),
-            'data': None
+            'data': {'task_id': task_id}
         }), 200
 
 def process_tmall_taobao(channel, order_file):
@@ -730,4 +794,14 @@ def process_tmall_taobao(channel, order_file):
             print(f"临时退款文件已删除: {refund_path}")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000) 
+    # 设置Flask应用的超时配置
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+    # 增加请求超时时间，支持大量数据处理
+    app.config['PERMANENT_SESSION_LIFETIME'] = 300  # 5分钟
+    # 设置请求体大小限制
+    app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
+    
+    # 启动服务器时设置超时参数
+    app.run(host='0.0.0.0', port=5000, threaded=True, 
+            request_timeout=300,  # 5分钟请求超时
+            request_handler_timeout=300)  # 5分钟处理超时 
